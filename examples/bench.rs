@@ -36,7 +36,8 @@ fn truth(rng: &mut Rng, kind: usize) -> i64 {
 fn accuracy() {
     let trips = 1000;
     let mut hits = [[0usize; 2]; 4];
-    let mut by_word: Vec<(&str, usize, usize)> = vec![("high", 0, 0), ("medium", 0, 0), ("low", 0, 0)];
+    let mut by_word: Vec<(&str, usize, usize)> =
+        vec![("high", 0, 0), ("medium", 0, 0), ("low", 0, 0)];
     let mut sizes = Vec::new();
     let mut misses = Vec::new();
     for seed in 0..trips {
@@ -46,14 +47,21 @@ fn accuracy() {
         let trip = simulate(&mut rng, days);
         let t = truth(&mut rng, kind);
         let phone: Vec<NaiveDateTime> = trip.phone.iter().map(|s| s.at).collect();
-        let camera: Vec<NaiveDateTime> = trip.camera.iter().map(|s| s.at - TimeDelta::seconds(t)).collect();
+        let camera: Vec<NaiveDateTime> = trip
+            .camera
+            .iter()
+            .map(|s| s.at - TimeDelta::seconds(t))
+            .collect();
         sizes.push(phone.len() + camera.len());
         let s = suggest(&phone, &camera, &[]);
         let hit = s.as_ref().is_some_and(|s| (s.offset - t).abs() <= 60);
         hits[kind][0] += hit as usize;
         hits[kind][1] += 1;
         if let Some(s) = &s {
-            let w = by_word.iter_mut().find(|w| w.0 == confidence_word(s.confidence)).unwrap();
+            let w = by_word
+                .iter_mut()
+                .find(|w| w.0 == confidence_word(s.confidence))
+                .unwrap();
             w.1 += hit as usize;
             w.2 += 1;
             if !hit && misses.len() < 8 {
@@ -79,12 +87,26 @@ fn accuracy() {
     println!("Suggested offset within 1 minute of the truth:");
     let all: usize = hits.iter().map(|h| h[0]).sum();
     for (k, h) in hits.iter().enumerate() {
-        println!("  {:28} {:>4} of {:>4}  {:.1}%", KINDS[k], h[0], h[1], 100.0 * h[0] as f64 / h[1] as f64);
+        println!(
+            "  {:28} {:>4} of {:>4}  {:.1}%",
+            KINDS[k],
+            h[0],
+            h[1],
+            100.0 * h[0] as f64 / h[1] as f64
+        );
     }
-    println!("  {:28} {all:>4} of {trips:>4}  {:.1}%", "all", 100.0 * all as f64 / trips as f64);
+    println!(
+        "  {:28} {all:>4} of {trips:>4}  {:.1}%",
+        "all",
+        100.0 * all as f64 / trips as f64
+    );
     println!("By the confidence shown:");
     for (w, hit, n) in &by_word {
-        let pct = if *n > 0 { 100.0 * *hit as f64 / *n as f64 } else { 0.0 };
+        let pct = if *n > 0 {
+            100.0 * *hit as f64 / *n as f64
+        } else {
+            0.0
+        };
         println!("  {w:7} {n:>4} trips, {pct:.1}% right");
     }
     for m in &misses {

@@ -43,11 +43,19 @@ fn long(tag: u16, v: u32, little: bool) -> Entry {
 }
 
 fn u16b(v: u16, little: bool) -> [u8; 2] {
-    if little { v.to_le_bytes() } else { v.to_be_bytes() }
+    if little {
+        v.to_le_bytes()
+    } else {
+        v.to_be_bytes()
+    }
 }
 
 fn u32b(v: u32, little: bool) -> [u8; 4] {
-    if little { v.to_le_bytes() } else { v.to_be_bytes() }
+    if little {
+        v.to_le_bytes()
+    } else {
+        v.to_be_bytes()
+    }
 }
 
 /// Size of an IFD plus the out-of-line data that follows it.
@@ -115,7 +123,11 @@ pub fn app1(f: &Fields) -> Vec<u8> {
     let thumb_at = ifd1_at + size(&ifd1);
     ifd0[3] = long(exif::EXIF_IFD, exif_at as u32, le);
 
-    let mut tiff = if le { b"II*\0".to_vec() } else { b"MM\0*".to_vec() };
+    let mut tiff = if le {
+        b"II*\0".to_vec()
+    } else {
+        b"MM\0*".to_vec()
+    };
     tiff.extend(u32b(ifd0_at as u32, le));
     let next = if f.thumbnail.is_some() { ifd1_at } else { 0 };
     tiff.extend(ifd(&ifd0, ifd0_at, next as u32, le));

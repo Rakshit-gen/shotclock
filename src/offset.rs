@@ -3,9 +3,8 @@
 
 /// Parse an offset into seconds.
 pub fn parse(s: &str) -> Result<i64, String> {
-    let err = || {
-        format!("can't read \"{s}\" as an offset; write it like +1h23m, -45m, 30s or -2:15")
-    };
+    let err =
+        || format!("can't read \"{s}\" as an offset; write it like +1h23m, -45m, 30s or -2:15");
     let t = s.trim();
     let (sign, rest) = match t.as_bytes().first() {
         Some(b'-') => (-1, &t[1..]),
@@ -19,7 +18,11 @@ pub fn parse(s: &str) -> Result<i64, String> {
     // h:mm or h:mm:ss
     if rest.contains(':') {
         let parts: Vec<&str> = rest.split(':').collect();
-        if parts.len() > 3 || parts.iter().any(|p| p.is_empty() || !p.bytes().all(|c| c.is_ascii_digit())) {
+        if parts.len() > 3
+            || parts
+                .iter()
+                .any(|p| p.is_empty() || !p.bytes().all(|c| c.is_ascii_digit()))
+        {
             return Err(err());
         }
         let nums: Vec<i64> = parts.iter().map(|p| p.parse().unwrap_or(0)).collect();

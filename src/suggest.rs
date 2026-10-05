@@ -78,7 +78,11 @@ fn burst_starts(sorted: &[i64]) -> Vec<i64> {
 /// `hints` are offsets in seconds worth preferring when they fit nearly as
 /// well as the best one, such as the gap between the time zones the two
 /// devices recorded.
-pub fn suggest(phone: &[NaiveDateTime], camera: &[NaiveDateTime], hints: &[i64]) -> Option<Suggestion> {
+pub fn suggest(
+    phone: &[NaiveDateTime],
+    camera: &[NaiveDateTime],
+    hints: &[i64],
+) -> Option<Suggestion> {
     if phone.is_empty() || camera.is_empty() {
         return None;
     }
@@ -183,7 +187,8 @@ pub fn suggest(phone: &[NaiveDateTime], camera: &[NaiveDateTime], hints: &[i64])
         note = Some(if hour.abs() == 3600 {
             "a whole hour, which is usually daylight saving time".into()
         } else {
-            "a whole number of hours, which usually means the camera was set to another time zone".into()
+            "a whole number of hours, which usually means the camera was set to another time zone"
+                .into()
         });
     }
 
@@ -266,10 +271,17 @@ mod tests {
 
     #[test]
     fn finds_offsets_either_way_and_years_out() {
-        for truth in [TimeDelta::hours(-9), TimeDelta::minutes(3), TimeDelta::days(3000)] {
+        for truth in [
+            TimeDelta::hours(-9),
+            TimeDelta::minutes(3),
+            TimeDelta::days(3000),
+        ] {
             let (phone, camera) = trip(truth);
             let s = suggest(&phone, &camera, &[]).unwrap();
-            assert!((s.offset - truth.num_seconds()).abs() <= 60, "{truth} {s:?}");
+            assert!(
+                (s.offset - truth.num_seconds()).abs() <= 60,
+                "{truth} {s:?}"
+            );
         }
     }
 

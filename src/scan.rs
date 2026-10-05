@@ -129,11 +129,17 @@ pub fn scan(dir: &Path) -> std::io::Result<Folder> {
         let x = match read_head(&path) {
             Ok((_, Ok(x))) => x,
             Ok((_, Err(e))) => {
-                skipped.push(Skipped { name, reason: e.to_string() });
+                skipped.push(Skipped {
+                    name,
+                    reason: e.to_string(),
+                });
                 continue;
             }
             Err(e) => {
-                skipped.push(Skipped { name, reason: format!("can't read it: {e}") });
+                skipped.push(Skipped {
+                    name,
+                    reason: format!("can't read it: {e}"),
+                });
                 continue;
             }
         };
@@ -163,14 +169,18 @@ pub fn scan(dir: &Path) -> std::io::Result<Folder> {
     }
 
     for c in &mut cameras {
-        c.photos.sort_by(|a, b| a.taken.cmp(&b.taken).then(a.name.cmp(&b.name)));
+        c.photos
+            .sort_by(|a, b| a.taken.cmp(&b.taken).then(a.name.cmp(&b.name)));
     }
     // The reference is the most phone-like camera: a known phone maker, and
     // photos that carry a time zone, which phones write and most cameras
     // don't. Ties go to the camera with more photos.
     let score = |c: &Camera| {
         let tz = c.photos.iter().filter(|p| p.tz.is_some()).count() as f64 / c.photos.len() as f64;
-        (looks_like_phone(&c.name) as u8 as f64 * 2.0 + tz, c.photos.len())
+        (
+            looks_like_phone(&c.name) as u8 as f64 * 2.0 + tz,
+            c.photos.len(),
+        )
     };
     cameras.sort_by(|a, b| {
         let (sa, sb) = (score(a), score(b));
@@ -200,17 +210,56 @@ mod tests {
             thumbnail: None,
             little: true,
         };
-        std::fs::write(dir.join(name), build::insert(&bare_jpeg(), &build::app1(&f))).unwrap();
+        std::fs::write(
+            dir.join(name),
+            build::insert(&bare_jpeg(), &build::app1(&f)),
+        )
+        .unwrap();
     }
 
     #[test]
     fn groups_by_camera_and_picks_the_phone() {
         let d = tempfile::tempdir().unwrap();
-        write(d.path(), "DSCF0002.JPG", "FUJIFILM", "X-T30", "2024:07:14 10:00:05", None);
-        write(d.path(), "DSCF0001.JPG", "FUJIFILM", "X-T30", "2024:07:14 10:00:00", None);
-        write(d.path(), "DSCF0003.JPG", "FUJIFILM", "X-T30", "2024:07:14 11:00:00", None);
-        write(d.path(), "IMG_1.jpg", "Apple", "iPhone 15", "2024:07:14 15:37:00", Some(540));
-        write(d.path(), "IMG_2.jpg", "Canon", "Canon EOS R6", "2024:07:14 15:37:00", None);
+        write(
+            d.path(),
+            "DSCF0002.JPG",
+            "FUJIFILM",
+            "X-T30",
+            "2024:07:14 10:00:05",
+            None,
+        );
+        write(
+            d.path(),
+            "DSCF0001.JPG",
+            "FUJIFILM",
+            "X-T30",
+            "2024:07:14 10:00:00",
+            None,
+        );
+        write(
+            d.path(),
+            "DSCF0003.JPG",
+            "FUJIFILM",
+            "X-T30",
+            "2024:07:14 11:00:00",
+            None,
+        );
+        write(
+            d.path(),
+            "IMG_1.jpg",
+            "Apple",
+            "iPhone 15",
+            "2024:07:14 15:37:00",
+            Some(540),
+        );
+        write(
+            d.path(),
+            "IMG_2.jpg",
+            "Canon",
+            "Canon EOS R6",
+            "2024:07:14 15:37:00",
+            None,
+        );
         std::fs::write(d.path().join("IMG_3.HEIC"), b"x").unwrap();
         std::fs::write(d.path().join("notes.txt"), b"x").unwrap();
         std::fs::write(d.path().join("broken.jpg"), b"x").unwrap();
@@ -219,7 +268,11 @@ mod tests {
         let names: Vec<&str> = f.cameras.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, ["Apple iPhone 15", "FUJIFILM X-T30", "Canon EOS R6"]);
         assert!(f.cameras[0].reference && !f.cameras[1].reference);
-        let fuji: Vec<&str> = f.cameras[1].photos.iter().map(|p| p.name.as_str()).collect();
+        let fuji: Vec<&str> = f.cameras[1]
+            .photos
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
         assert_eq!(fuji, ["DSCF0001.JPG", "DSCF0002.JPG", "DSCF0003.JPG"]);
         let skipped: Vec<&str> = f.skipped.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(skipped, ["IMG_3.HEIC", "broken.jpg"]);

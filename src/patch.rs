@@ -56,7 +56,10 @@ pub fn patch(bytes: &[u8], shift: TimeDelta, tz: Option<i32>) -> Result<Vec<u8>,
             out[t.at..t.at + 6].copy_from_slice(value.as_bytes());
         }
     }
-    if x.offsets.iter().any(|(tag, _)| *tag == exif::OFFSET_ORIGINAL) {
+    if x.offsets
+        .iter()
+        .any(|(tag, _)| *tag == exif::OFFSET_ORIGINAL)
+    {
         return Ok(out);
     }
     add_offset_original(&out, &x, &value)
@@ -79,8 +82,20 @@ fn add_offset_original(bytes: &[u8], x: &Exif, value: &str) -> Result<Vec<u8>, E
         end: l.segment.end,
     };
     let n = r.u16(ifd)? as usize;
-    let u16b = |v: u16| if l.little { v.to_le_bytes() } else { v.to_be_bytes() };
-    let u32b = |v: u32| if l.little { v.to_le_bytes() } else { v.to_be_bytes() };
+    let u16b = |v: u16| {
+        if l.little {
+            v.to_le_bytes()
+        } else {
+            v.to_be_bytes()
+        }
+    };
+    let u32b = |v: u32| {
+        if l.little {
+            v.to_le_bytes()
+        } else {
+            v.to_be_bytes()
+        }
+    };
 
     // IFDs start on an even offset.
     let pad = (l.segment.end - l.tiff) % 2;
@@ -144,16 +159,26 @@ mod tests {
             // Only bytes inside the three date strings differ.
             let changed: Vec<usize> = (0..src.len()).filter(|&i| src[i] != out[i]).collect();
             assert!(!changed.is_empty());
-            assert!(changed.iter().all(|&i| a.dates.iter().any(|(_, t)| (t.at..t.at + 19).contains(&i))));
+            assert!(
+                changed
+                    .iter()
+                    .all(|&i| a.dates.iter().any(|(_, t)| (t.at..t.at + 19).contains(&i)))
+            );
         }
     }
 
     #[test]
     fn crosses_midnight_and_month_ends() {
         let out = patch(&photo(true, None), TimeDelta::days(18), None).unwrap();
-        assert_eq!(exif::read(&out).unwrap().taken.unwrap().to_string(), "2024-08-01 18:03:27");
+        assert_eq!(
+            exif::read(&out).unwrap().taken.unwrap().to_string(),
+            "2024-08-01 18:03:27"
+        );
         let out = patch(&photo(false, None), TimeDelta::hours(-19), None).unwrap();
-        assert_eq!(exif::read(&out).unwrap().taken.unwrap().to_string(), "2024-07-13 23:03:27");
+        assert_eq!(
+            exif::read(&out).unwrap().taken.unwrap().to_string(),
+            "2024-07-13 23:03:27"
+        );
     }
 
     #[test]
@@ -164,7 +189,10 @@ mod tests {
             assert_eq!(out.len(), src.len());
             let b = exif::read(&out).unwrap();
             assert_eq!(b.tz, Some(540));
-            assert_eq!(image_hash(&src, &exif::read(&src).unwrap()), image_hash(&out, &b));
+            assert_eq!(
+                image_hash(&src, &exif::read(&src).unwrap()),
+                image_hash(&out, &b)
+            );
         }
     }
 
@@ -177,7 +205,10 @@ mod tests {
             assert_eq!(b.tz, Some(-210));
             assert_eq!(b.taken.unwrap().to_string(), "2024-07-14 17:33:27");
             assert_eq!(b.make.as_deref(), Some("FUJIFILM"));
-            assert_eq!(&out[b.thumbnail.clone().unwrap()], &src[a.thumbnail.clone().unwrap()]);
+            assert_eq!(
+                &out[b.thumbnail.clone().unwrap()],
+                &src[a.thumbnail.clone().unwrap()]
+            );
             assert_eq!(image_hash(&src, &a), image_hash(&out, &b));
             // A second pass finds the added field and changes it in place.
             let again = patch(&out, TimeDelta::zero(), Some(60)).unwrap();

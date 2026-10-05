@@ -86,13 +86,19 @@ pub struct Written {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("the output folder is the photo folder; pick another so the originals stay as they are")]
+    #[error(
+        "the output folder is the photo folder; pick another so the originals stay as they are"
+    )]
     SameFolder,
-    #[error("{0} already exists in the output folder; pick an empty folder, nothing is ever overwritten")]
+    #[error(
+        "{0} already exists in the output folder; pick an empty folder, nothing is ever overwritten"
+    )]
     Exists(String),
     #[error("{name}: {source}")]
     Exif { name: String, source: exif::Error },
-    #[error("{name}: the image data changed while writing the copy, so it was deleted; please report this")]
+    #[error(
+        "{name}: the image data changed while writing the copy, so it was deleted; please report this"
+    )]
     Mismatch { name: String },
     #[error("{0}: {1}")]
     Io(String, std::io::Error),
@@ -137,7 +143,10 @@ pub fn write(changes: &[Change], out: &Path) -> Result<Vec<Written>, Error> {
         // or ignored, so it should agree with the new capture time.
         let when = match c.tz {
             Some(tz) => Some(c.to.and_utc() - TimeDelta::minutes(tz as i64)),
-            None => Local.from_local_datetime(&c.to).earliest().map(|t| t.to_utc()),
+            None => Local
+                .from_local_datetime(&c.to)
+                .earliest()
+                .map(|t| t.to_utc()),
         };
         if let Some(when) = when {
             f.set_modified(when.into()).map_err(|e| io(&dst, e))?;
@@ -187,11 +196,17 @@ mod tests {
         assert_eq!(x.taken.unwrap().to_string(), "2024-07-14 19:03:27");
         assert_eq!(x.tz, Some(120));
         // 19:03:27 at +02:00 is 17:03:27 UTC.
-        let mtime = fs::metadata(out.join("DSCF0001.JPG")).unwrap().modified().unwrap();
+        let mtime = fs::metadata(out.join("DSCF0001.JPG"))
+            .unwrap()
+            .modified()
+            .unwrap();
         let mtime: chrono::DateTime<chrono::Utc> = mtime.into();
         assert_eq!(mtime.to_rfc3339(), "2024-07-14T17:03:27+00:00");
         // The originals are untouched.
-        assert_eq!(fs::read(src.join("DSCF0001.JPG")).unwrap(), photo(true, None));
+        assert_eq!(
+            fs::read(src.join("DSCF0001.JPG")).unwrap(),
+            photo(true, None)
+        );
 
         assert!(matches!(write(&ch, &out), Err(Error::Exists(_))));
         assert!(matches!(write(&ch, &src), Err(Error::SameFolder)));

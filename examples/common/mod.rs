@@ -55,7 +55,10 @@ pub struct Trip {
 /// phones take a few frames. The phone also takes stray photos (a menu, a
 /// ticket) that the camera never sees.
 pub fn simulate(rng: &mut Rng, days: u32) -> Trip {
-    let start = NaiveDate::from_ymd_opt(2024, 10, 3).unwrap().and_hms_opt(0, 0, 0).unwrap();
+    let start = NaiveDate::from_ymd_opt(2024, 10, 3)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
     let mut trip = Trip {
         phone: Vec::new(),
         camera: Vec::new(),
@@ -63,7 +66,9 @@ pub fn simulate(rng: &mut Rng, days: u32) -> Trip {
     let mut scene = 0;
     for day in 0..days as i64 {
         let day_start = start + TimeDelta::days(day);
-        let mut moments: Vec<i64> = (0..rng.range(6, 18)).map(|_| rng.range(8 * 3600, 22 * 3600)).collect();
+        let mut moments: Vec<i64> = (0..rng.range(6, 18))
+            .map(|_| rng.range(8 * 3600, 22 * 3600))
+            .collect();
         moments.sort_unstable();
         for m in moments {
             scene += 1;
@@ -82,7 +87,11 @@ pub fn simulate(rng: &mut Rng, days: u32) -> Trip {
                 for _ in 0..rng.range(2, 25) {
                     trip.camera.push(Shot { at, scene });
                     // Mostly quick frames, with the odd pause to recompose.
-                    at += TimeDelta::seconds(if rng.chance(0.15) { rng.range(20, 90) } else { rng.range(0, 4) });
+                    at += TimeDelta::seconds(if rng.chance(0.15) {
+                        rng.range(20, 90)
+                    } else {
+                        rng.range(0, 4)
+                    });
                 }
             }
         }
@@ -106,9 +115,9 @@ fn pixels(at: NaiveDateTime, scene: u32, w: usize, h: usize) -> Vec<u8> {
     let day = (1.0 - ((hour - 13.0) / 8.0).powi(2)).clamp(0.08, 1.0);
     let dusk = (1.0 - ((hour - 19.0) / 2.0).powi(2)).clamp(0.0, 1.0);
     let sky = [
-        (120.0 * day + 120.0 * dusk) as f64,
-        (160.0 * day + 50.0 * dusk) as f64,
-        (220.0 * day + 10.0 * dusk) as f64,
+        120.0 * day + 120.0 * dusk,
+        160.0 * day + 50.0 * dusk,
+        220.0 * day + 10.0 * dusk,
     ];
     let hue = (scene.wrapping_mul(2_654_435_761) >> 8) as f64 / (1u32 << 24) as f64 * 6.0;
     let c = |k: f64| {
@@ -145,7 +154,14 @@ fn encode(rgb: &[u8], w: u16, h: u16, quality: u8) -> Vec<u8> {
 
 /// A JPEG with EXIF: what the camera's clock said, the camera's name, an
 /// optional time zone and a 160 by 120 thumbnail.
-pub fn jpeg(shot: &Shot, clock: NaiveDateTime, make: &str, model: &str, tz: Option<i32>, little: bool) -> Vec<u8> {
+pub fn jpeg(
+    shot: &Shot,
+    clock: NaiveDateTime,
+    make: &str,
+    model: &str,
+    tz: Option<i32>,
+    little: bool,
+) -> Vec<u8> {
     let thumb = encode(&pixels(shot.at, shot.scene, 160, 120), 160, 120, 70);
     let main = encode(&pixels(shot.at, shot.scene, 480, 360), 480, 360, 75);
     let app1 = build::app1(&Fields {
