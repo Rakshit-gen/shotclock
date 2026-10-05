@@ -2,3 +2,4 @@
 //! with corrected dates.
 pub mod exif;
 pub mod build;
+pub mod patch;
