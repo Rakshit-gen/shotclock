@@ -1,0 +1,202 @@
+//! Guessing a camera's clock offset by lining its bursts of shooting up
+//! with the phone's.
+//!
+//! People reach for the camera and the phone at the same moments: a view,
+//! a meal, a sunset. So the camera's photo counts per minute, slid along
+//! in time, should line up with the phone's at one offset much better than
+//! at any other.
+
+use chrono::NaiveDateTime;
+use serde::Serialize;
+
+/// How far either way the coarse search looks, in minutes.
+const WINDOW: i64 = 24 * 60;
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Suggestion {
+    /// Seconds to add to the camera's times.
+    pub offset: i64,
+    /// 0 to 1: how much better this offset fits than the next best one,
+    /// times the share of camera photos that land near a phone photo.
+    pub confidence: f64,
+    /// Share of camera photos within 3 minutes of a phone photo after the
+    /// shift.
+    pub matched: f64,
+    /// The best offset more than 15 minutes away from this one.
+    pub runner_up: Option<i64>,
+}
+
+fn secs(t: &NaiveDateTime) -> i64 {
+    t.and_utc().timestamp()
+}
+
+fn median(v: &mut [i64]) -> i64 {
+    v.sort_unstable();
+    v[v.len() / 2]
+}
+
+/// Photos per minute, squashed so one 40-frame burst doesn't outweigh
+/// several moments with a few photos each.
+fn per_minute(times: &[i64], start: i64, len: usize) -> Vec<f64> {
+    let mut counts = vec![0u32; len];
+    for t in times {
+        let i = (t.div_euclid(60) - start) as usize;
+        if let Some(c) = counts.get_mut(i) {
+            *c += 1;
+        }
+    }
+    counts.iter().map(|&c| (c as f64).ln_1p()).collect()
+}
+
+/// Seconds from `t` to the nearest time in a sorted list.
+fn gap(sorted: &[i64], t: i64) -> i64 {
+    let i = sorted.partition_point(|&x| x < t);
+    let after = sorted.get(i).map(|x| x - t);
+    let before = i.checked_sub(1).map(|j| t - sorted[j]);
+    after.into_iter().chain(before).min().unwrap_or(i64::MAX)
+}
+
+/// How well camera photos shifted by `offset` seconds sit next to phone
+/// photos, counting a photo fully when it is within seconds of one and
+/// fading out over a couple of minutes.
+fn fine_score(phone: &[i64], camera: &[i64], offset: i64) -> f64 {
+    camera
+        .iter()
+        .map(|&t| {
+            let g = gap(phone, t + offset) as f64 / 45.0;
+            (-g * g).exp()
+        })
+        .sum()
+}
+
+pub fn suggest(phone: &[NaiveDateTime], camera: &[NaiveDateTime]) -> Option<Suggestion> {
+    if phone.is_empty() || camera.is_empty() {
+        return None;
+    }
+    let mut p: Vec<i64> = phone.iter().map(secs).collect();
+    let mut c: Vec<i64> = camera.iter().map(secs).collect();
+    // A camera reset after a battery change can be years out. Centre the
+    // search on the gap between the middles of the two sets so that case
+    // still lands inside the window.
+    let center = {
+        let d = median(&mut p) - median(&mut c);
+        if d.abs() > WINDOW * 60 { d.div_euclid(60) } else { 0 }
+    };
+
+    // Coarse: correlate per-minute activity at every whole-minute offset.
+    // The phone side is blurred over five minutes, since the two devices
+    // never fire at quite the same second.
+    let p_start = p[0].div_euclid(60) - 2;
+    let p_len = (p[p.len() - 1].div_euclid(60) - p_start + 3) as usize;
+    let pm = per_minute(&p, p_start, p_len);
+    let mut blurred = vec![0.0; p_len];
+    for (i, v) in pm.iter().enumerate().filter(|(_, v)| **v > 0.0) {
+        for (k, w) in [(-2, 0.25), (-1, 0.75), (0, 1.0), (1, 0.75), (2, 0.25)] {
+            if let Some(b) = blurred.get_mut((i as i64 + k) as usize) {
+                *b += v * w;
+            }
+        }
+    }
+    let c_start = c[0].div_euclid(60);
+    let c_len = (c[c.len() - 1].div_euclid(60) - c_start + 1) as usize;
+    let cm: Vec<(i64, f64)> = per_minute(&c, c_start, c_len)
+        .into_iter()
+        .enumerate()
+        .filter(|(_, v)| *v > 0.0)
+        .map(|(i, v)| (c_start + i as i64, v))
+        .collect();
+
+    let mut scores = Vec::with_capacity(2 * WINDOW as usize + 1);
+    for d in center - WINDOW..=center + WINDOW {
+        let mut s = 0.0;
+        for &(m, v) in &cm {
+            let i = m + d - p_start;
+            if i >= 0 && (i as usize) < p_len {
+                s += v * blurred[i as usize];
+            }
+        }
+        scores.push((d, s));
+    }
+    let &(best, top) = scores.iter().max_by(|a, b| a.1.total_cmp(&b.1))?;
+    if top <= 0.0 {
+        return None;
+    }
+    let runner = scores
+        .iter()
+        .filter(|(d, _)| (d - best).abs() > 15)
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .filter(|r| r.1 > 0.0);
+
+    // Fine: search seconds around the best minute.
+    p.sort_unstable();
+    let fine = |o: i64| fine_score(&p, &c, o);
+    let mut offset = best * 60;
+    let mut fine_top = f64::MIN;
+    for o in (best * 60 - 120)..=(best * 60 + 120) {
+        let s = fine(o);
+        if s > fine_top {
+            fine_top = s;
+            offset = o;
+        }
+    }
+
+    let matched = c.iter().filter(|&&t| gap(&p, t + offset) <= 180).count() as f64 / c.len() as f64;
+    let margin = runner.map_or(1.0, |r| 1.0 - r.1 / top);
+    Some(Suggestion {
+        offset,
+        confidence: (margin * matched).clamp(0.0, 1.0),
+        matched,
+        runner_up: runner.map(|r| r.0 * 60),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeDelta;
+
+    fn at(s: &str) -> NaiveDateTime {
+        NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").unwrap()
+    }
+
+    /// Ten moments over a day; both devices shoot at each, a little apart.
+    fn trip(offset: TimeDelta) -> (Vec<NaiveDateTime>, Vec<NaiveDateTime>) {
+        let start = at("2024-07-14 08:00:00");
+        let moments = [0, 47, 95, 180, 222, 300, 371, 460, 545, 610];
+        let (mut phone, mut camera) = (Vec::new(), Vec::new());
+        for (i, m) in moments.iter().enumerate() {
+            let t = start + TimeDelta::minutes(*m);
+            for k in 0..(2 + i % 3) {
+                phone.push(t + TimeDelta::seconds(20 * k as i64));
+            }
+            for k in 0..(3 + i % 4) {
+                camera.push(t + TimeDelta::seconds(35 + 4 * k as i64) - offset);
+            }
+        }
+        (phone, camera)
+    }
+
+    #[test]
+    fn finds_an_odd_offset_to_the_minute() {
+        let truth = TimeDelta::minutes(5 * 60 + 37);
+        let (phone, camera) = trip(truth);
+        let s = suggest(&phone, &camera).unwrap();
+        assert!((s.offset - truth.num_seconds()).abs() <= 60, "{s:?}");
+        assert!(s.confidence > 0.5, "{s:?}");
+        assert_eq!(s.matched, 1.0);
+    }
+
+    #[test]
+    fn finds_offsets_either_way_and_years_out() {
+        for truth in [TimeDelta::hours(-9), TimeDelta::minutes(3), TimeDelta::days(3000)] {
+            let (phone, camera) = trip(truth);
+            let s = suggest(&phone, &camera).unwrap();
+            assert!((s.offset - truth.num_seconds()).abs() <= 60, "{truth} {s:?}");
+        }
+    }
+
+    #[test]
+    fn gives_up_without_overlap() {
+        assert_eq!(suggest(&[], &[at("2024-07-14 08:00:00")]), None);
+    }
+}

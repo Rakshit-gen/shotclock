@@ -5,3 +5,4 @@ pub mod build;
 pub mod patch;
 pub mod offset;
 pub mod scan;
+pub mod suggest;
