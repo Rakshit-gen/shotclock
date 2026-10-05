@@ -9,6 +9,7 @@ import {
   pairOffset,
   parseOffset,
   parseTaken,
+  parseTz,
   thumbsToDraw,
 } from "./time";
 
@@ -43,6 +44,12 @@ describe("clock text", () => {
     expect(dateTime(t)).toBe("Thu 3 Oct 2024, 23:59:58");
     expect(formatTz(540)).toBe("+09:00");
     expect(formatTz(-210)).toBe("−03:30");
+    expect(parseTz("+09:00")).toBe(540);
+    expect(parseTz("-3:30")).toBe(-210);
+    expect(parseTz(formatTz(-210))).toBe(-210);
+    expect(parseTz("9")).toBe(540);
+    expect(parseTz("+15:00")).toBeNull();
+    expect(parseTz("Tokyo")).toBeNull();
   });
 });
 

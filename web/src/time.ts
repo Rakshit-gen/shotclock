@@ -113,3 +113,12 @@ export function nearestTz(phone: { t: number; tz: number | null }[], t: number):
   }
   return best;
 }
+
+/** "+09:00", "-3:30" or "9" to minutes east of UTC; null if unreadable. */
+export function parseTz(input: string): number | null {
+  const m = /^([+\-−])?(\d{1,2})(?::?(\d{2}))?$/.exec(input.trim());
+  if (!m) return null;
+  const v = +m[2]! * 60 + +(m[3] ?? 0);
+  if (v > 14 * 60 || +(m[3] ?? 0) >= 60) return null;
+  return m[1] === "-" || m[1] === "−" ? -v : v;
+}
