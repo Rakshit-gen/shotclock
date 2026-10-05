@@ -2,6 +2,8 @@
 name = "shotclock"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
+description = "Fix the dates on photos from a camera whose clock was wrong, by lining its shots up with a phone's"
 
 [dependencies]
 anyhow = { version = "1", optional = true }
