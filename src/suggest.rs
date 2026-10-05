@@ -9,6 +9,9 @@
 use chrono::NaiveDateTime;
 use serde::Serialize;
 
+use crate::scan::{Camera, Folder};
+use crate::write::nearest_tz;
+
 /// How far either way the coarse search looks, in minutes.
 const WINDOW: i64 = 24 * 60;
 
@@ -173,6 +176,36 @@ pub fn suggest(phone: &[NaiveDateTime], camera: &[NaiveDateTime], hints: &[i64])
         runner_up: runner.map(|r| r.0 * 60),
         note,
     })
+}
+
+/// "high", "medium" or "low", for people.
+pub fn confidence_word(c: f64) -> &'static str {
+    if c >= 0.5 {
+        "high"
+    } else if c >= 0.25 {
+        "medium"
+    } else {
+        "low"
+    }
+}
+
+/// Suggest an offset for one camera of a scanned folder against its
+/// reference camera, using any time zones both recorded as hints.
+pub fn for_camera(folder: &Folder, camera: usize) -> Option<Suggestion> {
+    let reference = folder.cameras.iter().find(|c| c.reference)?;
+    let cam = &folder.cameras[camera];
+    if cam.reference {
+        return None;
+    }
+    let mut hints: Vec<i64> = cam
+        .photos
+        .iter()
+        .filter_map(|p| Some((nearest_tz(reference, p.taken)? - p.tz?) as i64 * 60))
+        .collect();
+    hints.sort_unstable();
+    hints.dedup();
+    let times = |c: &Camera| c.photos.iter().map(|p| p.taken).collect::<Vec<_>>();
+    suggest(&times(reference), &times(cam), &hints)
 }
 
 #[cfg(test)]
