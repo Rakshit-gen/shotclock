@@ -6,20 +6,25 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
-use axum::extract::{Path as UrlPath, State};
+use axum::extract::{Path as UrlPath, Request, State};
 use axum::http::{StatusCode, header};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
 use serde::Deserialize;
 use serde_json::json;
 use shotclock::scan::{self, Folder};
-use shotclock::{suggest, write};
+use shotclock::suggest;
+use shotclock::write::{self, Tz};
 use tower_http::services::{ServeDir, ServeFile};
 
 #[derive(Parser)]
-#[command(version, about = "Fix the dates on photos from a camera whose clock was wrong, in the browser")]
+#[command(
+    version,
+    about = "Fix the dates on photos from a camera whose clock was wrong, in the browser"
+)]
 struct Cli {
     /// A folder of photos to open right away. You can also type one on the page.
     dir: Option<PathBuf>,
@@ -109,10 +114,16 @@ fn expand(path: &str) -> PathBuf {
 
 fn open(state: &App, dir: &Path) -> Result<Arc<Opened>, String> {
     let dir = std::fs::canonicalize(dir).map_err(|e| {
-        format!("can't open {}: {e}. Check the path and try again.", dir.display())
+        format!(
+            "can't open {}: {e}. Check the path and try again.",
+            dir.display()
+        )
     })?;
     if !dir.is_dir() {
-        return Err(format!("{} is a file; give the folder that holds the photos", dir.display()));
+        return Err(format!(
+            "{} is a file; give the folder that holds the photos",
+            dir.display()
+        ));
     }
     let folder = scan::scan(&dir).map_err(|e| format!("can't read {}: {e}", dir.display()))?;
     let mut slot = state.opened.write().unwrap();
@@ -182,6 +193,101 @@ async fn thumbnail(
     }
 }
 
+#[derive(Deserialize)]
+struct FixRequest {
+    camera: usize,
+    offset: i64,
+    /// null to keep, "phone" to copy from the nearest phone photo, or
+    /// minutes east of UTC.
+    tz: Option<serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+struct WriteRequest {
+    fixes: Vec<FixRequest>,
+    out: String,
+}
+
+fn tz_choice(v: Option<&serde_json::Value>) -> Result<Tz, String> {
+    match v {
+        None | Some(serde_json::Value::Null) => Ok(Tz::Keep),
+        Some(serde_json::Value::String(s)) if s == "phone" => Ok(Tz::Phone),
+        Some(v) => v
+            .as_i64()
+            .filter(|m| m.abs() <= 14 * 60)
+            .map(|m| Tz::Fixed(m as i32))
+            .ok_or_else(|| format!("{v} isn't a time zone the page should send")),
+    }
+}
+
+/// Write corrected copies for every camera given. All of them go into one
+/// folder; names from different cameras can't clash with each other there
+/// because `write` refuses to overwrite.
+async fn write_copies(
+    State(state): State<Arc<App>>,
+    Json(req): Json<WriteRequest>,
+) -> Api<Json<serde_json::Value>> {
+    let opened = state
+        .opened
+        .read()
+        .unwrap()
+        .clone()
+        .ok_or_else(|| bad("open a folder first"))?;
+    if req.out.trim().is_empty() {
+        return Err(bad("say which folder the copies should go in"));
+    }
+    let out = expand(&req.out);
+    let mut jobs = Vec::new();
+    for f in &req.fixes {
+        let cam = opened
+            .folder
+            .cameras
+            .get(f.camera)
+            .filter(|c| !c.reference)
+            .ok_or_else(|| bad("that camera isn't in the open folder any more; open it again"))?;
+        let tz = tz_choice(f.tz.as_ref()).map_err(bad)?;
+        jobs.push((
+            cam.name.clone(),
+            write::changes(&opened.folder, f.camera, f.offset, tz),
+        ));
+    }
+    let o = out.clone();
+    let results = tokio::task::spawn_blocking(move || {
+        jobs.into_iter()
+            .map(|(name, changes)| {
+                write::write(&changes, &o)
+                    .map(|w| json!({ "camera": name, "written": w.len() }))
+                    .map_err(|e| e.to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()
+    })
+    .await
+    .map_err(|e| bad(e.to_string()))?
+    .map_err(bad)?;
+    Ok(Json(json!({ "out": out, "cameras": results })))
+}
+
+/// Only answer requests addressed to this machine by name. Without this, a
+/// web page elsewhere could point its own domain at 127.0.0.1 and drive
+/// the server from the browser.
+async fn local_only(req: Request, next: Next) -> Response {
+    let host = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("");
+    let name = host.rsplit_once(':').map_or(host, |(n, _)| n);
+    if matches!(name, "127.0.0.1" | "localhost" | "[::1]") {
+        next.run(req).await
+    } else {
+        (
+            StatusCode::FORBIDDEN,
+            "open shotclock at http://127.0.0.1 instead",
+        )
+            .into_response()
+    }
+}
+
 #[derive(rust_embed::RustEmbed)]
 #[folder = "web/dist"]
 #[allow_missing = true]
@@ -229,13 +335,14 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/api/folder", get(get_folder).post(open_folder))
         .route("/api/thumb/{generation}/{camera}/{index}", get(thumbnail))
+        .route("/api/write", post(write_copies))
         .with_state(state);
     let app = match &cli.static_dir {
-        Some(dir) => app.fallback_service(
-            ServeDir::new(dir).fallback(ServeFile::new(dir.join("index.html"))),
-        ),
+        Some(dir) => app
+            .fallback_service(ServeDir::new(dir).fallback(ServeFile::new(dir.join("index.html")))),
         None => app.fallback(embedded_ui),
     };
+    let app = app.layer(middleware::from_fn(local_only));
 
     let addr = SocketAddr::from(([127, 0, 0, 1], cli.port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -259,5 +366,15 @@ mod tests {
         assert_eq!(expand("~"), home);
         assert_eq!(expand("~bob/x"), PathBuf::from("~bob/x"));
         assert_eq!(expand("/tmp/x"), PathBuf::from("/tmp/x"));
+    }
+
+    #[test]
+    fn reads_the_time_zone_choice() {
+        assert_eq!(tz_choice(None), Ok(Tz::Keep));
+        assert_eq!(tz_choice(Some(&json!(null))), Ok(Tz::Keep));
+        assert_eq!(tz_choice(Some(&json!("phone"))), Ok(Tz::Phone));
+        assert_eq!(tz_choice(Some(&json!(-210))), Ok(Tz::Fixed(-210)));
+        assert!(tz_choice(Some(&json!(5000))).is_err());
+        assert!(tz_choice(Some(&json!("Tokyo"))).is_err());
     }
 }
