@@ -61,17 +61,18 @@ fn gap(sorted: &[i64], t: i64) -> i64 {
     after.into_iter().chain(before).min().unwrap_or(i64::MAX)
 }
 
-/// How well camera photos shifted by `offset` seconds sit next to phone
-/// photos, counting a photo fully when it is within seconds of one and
-/// fading out over a couple of minutes.
-fn fine_score(phone: &[i64], camera: &[i64], offset: i64) -> f64 {
-    camera
-        .iter()
-        .map(|&t| {
-            let g = gap(phone, t + offset) as f64 / 45.0;
-            (-g * g).exp()
-        })
-        .sum()
+/// The first photo of each burst: photos more than five minutes after the
+/// one before start a new burst. Expects sorted times.
+fn burst_starts(sorted: &[i64]) -> Vec<i64> {
+    let mut out = Vec::new();
+    let mut last = i64::MIN;
+    for &t in sorted {
+        if t.saturating_sub(last) > 300 {
+            out.push(t);
+        }
+        last = t;
+    }
+    out
 }
 
 /// `hints` are offsets in seconds worth preferring when they fit nearly as
@@ -83,12 +84,16 @@ pub fn suggest(phone: &[NaiveDateTime], camera: &[NaiveDateTime], hints: &[i64])
     }
     let mut p: Vec<i64> = phone.iter().map(secs).collect();
     let mut c: Vec<i64> = camera.iter().map(secs).collect();
-    // A camera reset after a battery change can be years out. Centre the
-    // search on the gap between the middles of the two sets so that case
-    // still lands inside the window.
-    let center = {
-        let d = median(&mut p) - median(&mut c);
-        if d.abs() > WINDOW * 60 { d.div_euclid(60) } else { 0 }
+    p.sort_unstable();
+    c.sort_unstable();
+    // A camera reset after a battery change can be years out. When the two
+    // sets are more than a window apart, centre the search on the gap
+    // between their middles so that case still lands inside it.
+    let apart = c[c.len() - 1] < p[0] - WINDOW * 60 || c[0] > p[p.len() - 1] + WINDOW * 60;
+    let center = if apart {
+        (median(&mut p.clone()) - median(&mut c.clone())).div_euclid(60)
+    } else {
+        0
     };
 
     // Coarse: correlate per-minute activity at every whole-minute offset.
@@ -135,26 +140,41 @@ pub fn suggest(phone: &[NaiveDateTime], camera: &[NaiveDateTime], hints: &[i64])
         .max_by(|a, b| a.1.total_cmp(&b.1))
         .filter(|r| r.1 > 0.0);
 
-    // Fine: search seconds around the best minute.
-    p.sort_unstable();
-    let fine = |o: i64| fine_score(&p, &c, o);
+    // Fine: pair each camera burst with the phone burst that starts
+    // nearest to it at the coarse offset, and take the median gap between
+    // their first frames. Bursts are weighed equally however many frames
+    // they have, and a few unrelated pairs don't move a median.
+    let p_starts = burst_starts(&p);
+    let mut gaps: Vec<i64> = burst_starts(&c)
+        .iter()
+        .filter_map(|&cs| {
+            let t = cs + best * 60;
+            let i = p_starts.partition_point(|&x| x < t);
+            [i.checked_sub(1), Some(i)]
+                .into_iter()
+                .flatten()
+                .filter_map(|j| p_starts.get(j))
+                .map(|&ps| ps - cs)
+                .min_by_key(|g| (g - best * 60).abs())
+                .filter(|g| (g - best * 60).abs() <= 300)
+        })
+        .collect();
     let mut offset = best * 60;
-    let mut fine_top = f64::MIN;
-    for o in (best * 60 - 120)..=(best * 60 + 120) {
-        let s = fine(o);
-        if s > fine_top {
-            fine_top = s;
-            offset = o;
-        }
+    let mut spread = 180.0;
+    if !gaps.is_empty() {
+        offset = median(&mut gaps);
+        let mut dev: Vec<i64> = gaps.iter().map(|g| (g - offset).abs()).collect();
+        // Standard error of the median, from the median absolute deviation.
+        spread = 1.25 * 1.4826 * median(&mut dev) as f64 / (gaps.len() as f64).sqrt();
     }
 
     // Clocks are most often off by whole hours: a time zone not changed, or
-    // daylight saving. A camera and a phone rarely fire within the same
-    // half minute, so a whole number of hours (or a hint) a minute or two
-    // from the best fit, and scoring nearly as well, is the likelier truth.
+    // daylight saving. A whole number of hours (or a hint) within the
+    // measurement's own uncertainty of the estimate is the likelier truth.
     let mut note = None;
     let hour = (offset as f64 / 3600.0).round() as i64 * 3600;
-    let near = |o: i64| (o - offset).abs() <= 3 * 60 && fine(o) >= 0.75 * fine_top;
+    let tolerance = (2.5 * spread).clamp(60.0, 180.0) as i64;
+    let near = |o: i64| (o - offset).abs() <= tolerance;
     if let Some(&h) = hints.iter().find(|&&h| near(h)) {
         offset = h;
         note = Some("matches the gap between the time zones the two devices recorded".into());
