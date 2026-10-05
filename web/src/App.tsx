@@ -105,7 +105,10 @@ export default function App() {
   return (
     <div className="app">
       <header className="top">
-        <span className="brand">shotclock</span>
+        <span className="brand">
+          <img src="/logo.svg" alt="" width="26" height="26" />
+          shotclock
+        </span>
         {folder && !reopen && (
           <>
             <span className="path mono" title={folder.dir}>
