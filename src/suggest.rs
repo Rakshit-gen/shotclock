@@ -24,6 +24,8 @@ pub struct Suggestion {
     pub matched: f64,
     /// The best offset more than 15 minutes away from this one.
     pub runner_up: Option<i64>,
+    /// Set when the offset was rounded to a likely value, saying why.
+    pub note: Option<String>,
 }
 
 fn secs(t: &NaiveDateTime) -> i64 {
@@ -69,7 +71,10 @@ fn fine_score(phone: &[i64], camera: &[i64], offset: i64) -> f64 {
         .sum()
 }
 
-pub fn suggest(phone: &[NaiveDateTime], camera: &[NaiveDateTime]) -> Option<Suggestion> {
+/// `hints` are offsets in seconds worth preferring when they fit nearly as
+/// well as the best one, such as the gap between the time zones the two
+/// devices recorded.
+pub fn suggest(phone: &[NaiveDateTime], camera: &[NaiveDateTime], hints: &[i64]) -> Option<Suggestion> {
     if phone.is_empty() || camera.is_empty() {
         return None;
     }
@@ -140,6 +145,25 @@ pub fn suggest(phone: &[NaiveDateTime], camera: &[NaiveDateTime]) -> Option<Sugg
         }
     }
 
+    // Clocks are most often off by whole hours: a time zone not changed, or
+    // daylight saving. A camera and a phone rarely fire within the same
+    // half minute, so a whole number of hours (or a hint) a minute or two
+    // from the best fit, and scoring nearly as well, is the likelier truth.
+    let mut note = None;
+    let hour = (offset as f64 / 3600.0).round() as i64 * 3600;
+    let near = |o: i64| (o - offset).abs() <= 3 * 60 && fine(o) >= 0.75 * fine_top;
+    if let Some(&h) = hints.iter().find(|&&h| near(h)) {
+        offset = h;
+        note = Some("matches the gap between the time zones the two devices recorded".into());
+    } else if hour != offset && near(hour) {
+        offset = hour;
+        note = Some(if hour.abs() == 3600 {
+            "a whole hour, which is usually daylight saving time".into()
+        } else {
+            "a whole number of hours, which usually means the camera was set to another time zone".into()
+        });
+    }
+
     let matched = c.iter().filter(|&&t| gap(&p, t + offset) <= 180).count() as f64 / c.len() as f64;
     let margin = runner.map_or(1.0, |r| 1.0 - r.1 / top);
     Some(Suggestion {
@@ -147,6 +171,7 @@ pub fn suggest(phone: &[NaiveDateTime], camera: &[NaiveDateTime]) -> Option<Sugg
         confidence: (margin * matched).clamp(0.0, 1.0),
         matched,
         runner_up: runner.map(|r| r.0 * 60),
+        note,
     })
 }
 
@@ -180,7 +205,7 @@ mod tests {
     fn finds_an_odd_offset_to_the_minute() {
         let truth = TimeDelta::minutes(5 * 60 + 37);
         let (phone, camera) = trip(truth);
-        let s = suggest(&phone, &camera).unwrap();
+        let s = suggest(&phone, &camera, &[]).unwrap();
         assert!((s.offset - truth.num_seconds()).abs() <= 60, "{s:?}");
         assert!(s.confidence > 0.5, "{s:?}");
         assert_eq!(s.matched, 1.0);
@@ -190,13 +215,35 @@ mod tests {
     fn finds_offsets_either_way_and_years_out() {
         for truth in [TimeDelta::hours(-9), TimeDelta::minutes(3), TimeDelta::days(3000)] {
             let (phone, camera) = trip(truth);
-            let s = suggest(&phone, &camera).unwrap();
+            let s = suggest(&phone, &camera, &[]).unwrap();
             assert!((s.offset - truth.num_seconds()).abs() <= 60, "{truth} {s:?}");
         }
     }
 
     #[test]
     fn gives_up_without_overlap() {
-        assert_eq!(suggest(&[], &[at("2024-07-14 08:00:00")]), None);
+        assert_eq!(suggest(&[], &[at("2024-07-14 08:00:00")], &[]), None);
+    }
+
+    #[test]
+    fn rounds_to_whole_hours_and_hints_only_when_they_fit() {
+        // Camera shots land 35 s after the phone's, so the raw fit is off
+        // the hour by about that much.
+        let (phone, camera) = trip(TimeDelta::hours(-1));
+        let s = suggest(&phone, &camera, &[]).unwrap();
+        assert_eq!(s.offset, -3600);
+        assert!(s.note.unwrap().contains("daylight"));
+
+        let (phone, camera) = trip(TimeDelta::hours(8));
+        let s = suggest(&phone, &camera, &[8 * 3600]).unwrap();
+        assert_eq!(s.offset, 8 * 3600);
+        assert!(s.note.unwrap().contains("time zones"));
+
+        // Seven minutes off the hour is a real drift, not a time zone.
+        let truth = TimeDelta::minutes(2 * 60 + 7);
+        let (phone, camera) = trip(truth);
+        let s = suggest(&phone, &camera, &[2 * 3600]).unwrap();
+        assert!((s.offset - truth.num_seconds()).abs() <= 60, "{s:?}");
+        assert_eq!(s.note, None);
     }
 }
