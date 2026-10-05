@@ -220,9 +220,7 @@ fn tz_choice(v: Option<&serde_json::Value>) -> Result<Tz, String> {
     }
 }
 
-/// Write corrected copies for every camera given. All of them go into one
-/// folder; names from different cameras can't clash with each other there
-/// because `write` refuses to overwrite.
+/// Write corrected copies for every camera given, all into one folder.
 async fn write_copies(
     State(state): State<Arc<App>>,
     Json(req): Json<WriteRequest>,
@@ -251,19 +249,18 @@ async fn write_copies(
             write::changes(&opened.folder, f.camera, f.offset, tz),
         ));
     }
+    // One call for every camera, so a name clash is found before the first
+    // copy is written rather than after one camera's worth.
+    let results: Vec<_> = jobs
+        .iter()
+        .map(|(name, ch)| json!({ "camera": name, "written": ch.len() }))
+        .collect();
+    let all: Vec<write::Change> = jobs.into_iter().flat_map(|(_, ch)| ch).collect();
     let o = out.clone();
-    let results = tokio::task::spawn_blocking(move || {
-        jobs.into_iter()
-            .map(|(name, changes)| {
-                write::write(&changes, &o)
-                    .map(|w| json!({ "camera": name, "written": w.len() }))
-                    .map_err(|e| e.to_string())
-            })
-            .collect::<Result<Vec<_>, _>>()
-    })
-    .await
-    .map_err(|e| bad(e.to_string()))?
-    .map_err(bad)?;
+    tokio::task::spawn_blocking(move || write::write(&all, &o).map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| bad(e.to_string()))?
+        .map_err(bad)?;
     Ok(Json(json!({ "out": out, "cameras": results })))
 }
 

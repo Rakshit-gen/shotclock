@@ -271,17 +271,22 @@ fn run(cli: Cli) -> Result<(), String> {
     }
 
     if cli.write {
+        // All cameras in one call, so a clash in the output folder stops
+        // everything before the first copy rather than part way through.
+        let all: Vec<write::Change> = fixes.iter().flat_map(|f| f.changes.clone()).collect();
+        let mut written = write::write(&all, &out)
+            .map_err(|e| e.to_string())?
+            .into_iter();
         for f in &mut fixes {
-            if f.changes.is_empty() {
-                continue;
+            let w: Vec<_> = written.by_ref().take(f.changes.len()).collect();
+            if !w.is_empty() {
+                say(format!(
+                    "\nWrote {} copies from the {} to {}. The image data in each matches its original.",
+                    thousands(w.len()),
+                    f.camera,
+                    out.display()
+                ));
             }
-            let w = write::write(&f.changes, &out).map_err(|e| e.to_string())?;
-            say(format!(
-                "\nWrote {} copies from the {} to {}. The image data in each matches its original.",
-                thousands(w.len()),
-                f.camera,
-                out.display()
-            ));
             f.written = Some(w);
         }
     } else {
