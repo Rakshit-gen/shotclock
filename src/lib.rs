@@ -3,3 +3,4 @@
 pub mod exif;
 pub mod build;
 pub mod patch;
+pub mod offset;
