@@ -64,13 +64,14 @@ fn accuracy() {
                 .unwrap();
             w.1 += hit as usize;
             w.2 += 1;
-            if !hit && misses.len() < 8 {
+            if !hit {
                 misses.push(format!(
-                    "seed {}: truth {}, got {} ({} days, {} photos, confidence {:.2})",
+                    "seed {}: truth {}, got {} ({} day{}, {} photos, confidence {:.2})",
                     1000 + seed,
                     offset::format(t),
                     offset::format(s.offset),
                     days,
+                    if days == 1 { "" } else { "s" },
                     phone.len() + camera.len(),
                     s.confidence
                 ));

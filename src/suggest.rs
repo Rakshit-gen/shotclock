@@ -175,6 +175,7 @@ pub fn suggest(
     // Clocks are most often off by whole hours: a time zone not changed, or
     // daylight saving. A whole number of hours (or a hint) within the
     // measurement's own uncertainty of the estimate is the likelier truth.
+    // Zero hours is not one of them: a clock a minute out has drifted.
     let mut note = None;
     let hour = (offset as f64 / 3600.0).round() as i64 * 3600;
     let tolerance = (2.5 * spread).clamp(60.0, 180.0) as i64;
@@ -182,7 +183,7 @@ pub fn suggest(
     if let Some(&h) = hints.iter().find(|&&h| near(h)) {
         offset = h;
         note = Some("matches the gap between the time zones the two devices recorded".into());
-    } else if hour != offset && near(hour) {
+    } else if hour != 0 && hour != offset && near(hour) {
         offset = hour;
         note = Some(if hour.abs() == 3600 {
             "a whole hour, which is usually daylight saving time".into()
