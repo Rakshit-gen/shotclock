@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { type Folder, thumbUrl } from "./api";
-import { clock, day, formatOffset, parseTaken, thumbsToDraw } from "./time";
+import { clock, day, formatOffset, nudgeFor, parseTaken, thumbsToDraw } from "./time";
 
 export interface Pick {
   camera: number;
@@ -13,6 +13,7 @@ interface Props {
   offsets: number[];
   selected: number;
   onSelect: (camera: number) => void;
+  onOffset: (camera: number, secs: number) => void;
   pick: Pick | null;
   onPick: (p: Pick) => void;
 }
@@ -25,7 +26,15 @@ const PAD = 40;
 // label wins.
 const STEPS = [60_000, 5 * 60_000, 15 * 60_000, 30 * 60_000, HOUR, 3 * HOUR, 6 * HOUR, 12 * HOUR, 24 * HOUR];
 
-export default function Timeline({ folder, offsets, selected, onSelect, pick, onPick }: Props) {
+interface Drag {
+  camera: number;
+  pointer: number;
+  startX: number;
+  startOffset: number;
+  moved: boolean;
+}
+
+export default function Timeline({ folder, offsets, selected, onSelect, onOffset, pick, onPick }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(800);
   const [scrollLeft, setScrollLeft] = useState(0);
@@ -50,7 +59,12 @@ export default function Timeline({ folder, offsets, selected, onSelect, pick, on
     [folder, offsets],
   );
 
-  const [t0, t1] = useMemo(() => {
+  const drag = useRef<Drag | null>(null);
+  // While a strip is dragged the view holds still, or a lane that sets the
+  // edge of the trip would move the ground under the pointer.
+  const [frozen, setFrozen] = useState<[number, number] | null>(null);
+
+  const computed = useMemo((): [number, number] => {
     let lo = Infinity;
     let hi = -Infinity;
     for (const l of lanes) {
@@ -62,6 +76,7 @@ export default function Timeline({ folder, offsets, selected, onSelect, pick, on
     const pad = Math.max((hi - lo) * 0.02, 10 * 60_000);
     return [lo - pad, hi + pad];
   }, [lanes]);
+  const [t0, t1] = frozen ?? computed;
 
   const fit = (width - 2 * PAD) / (t1 - t0);
   const scale = zoom ?? fit;
@@ -102,6 +117,44 @@ export default function Timeline({ folder, offsets, selected, onSelect, pick, on
     return out;
   }, [t0, t1, scale]);
 
+  const onPointerDown = (e: React.PointerEvent, ci: number) => {
+    if (folder.cameras[ci]!.reference || e.button !== 0) return;
+    onSelect(ci);
+    drag.current = {
+      camera: ci,
+      pointer: e.pointerId,
+      startX: e.clientX,
+      startOffset: offsets[ci] ?? 0,
+      moved: false,
+    };
+  };
+
+  const onPointerMove = (e: React.PointerEvent) => {
+    const d = drag.current;
+    if (!d || d.pointer !== e.pointerId) return;
+    const dx = e.clientX - d.startX;
+    if (!d.moved) {
+      // A few pixels of wobble is still a click on a photo.
+      if (Math.abs(dx) < 4) return;
+      d.moved = true;
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      setFrozen([t0, t1]);
+    }
+    onOffset(d.camera, Math.round(d.startOffset + dx / scale / 1000));
+  };
+
+  const endDrag = () => {
+    drag.current = null;
+    setFrozen(null);
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent, ci: number) => {
+    const n = nudgeFor(e);
+    if (n === null) return;
+    e.preventDefault();
+    onOffset(ci, (offsets[ci] ?? 0) + n);
+  };
+
   // Only thumbnails near the visible part of the strip are put in the page.
   const visible = (px: number) => px > scrollLeft - width && px < scrollLeft + 2 * width;
 
@@ -141,7 +194,21 @@ export default function Timeline({ folder, offsets, selected, onSelect, pick, on
                 </div>
                 <div
                   className={cam.reference ? "strip reference" : "strip"}
-                  onPointerDown={() => !cam.reference && onSelect(ci)}
+                  {...(cam.reference
+                    ? {}
+                    : {
+                        role: "slider",
+                        tabIndex: 0,
+                        "aria-label": `Clock offset for the ${cam.name}. Drag, or use the arrow keys.`,
+                        "aria-valuenow": offsets[ci] ?? 0,
+                        "aria-valuetext": formatOffset(offsets[ci] ?? 0),
+                        onPointerDown: (e: React.PointerEvent) => onPointerDown(e, ci),
+                        onPointerMove,
+                        onPointerUp: endDrag,
+                        onPointerCancel: endDrag,
+                        onKeyDown: (e: React.KeyboardEvent) => onKeyDown(e, ci),
+                        onFocus: () => onSelect(ci),
+                      })}
                 >
                   {drawn.filter((i) => visible(xs[i]!)).map((i) => {
                     const p = cam.photos[i]!;
@@ -150,6 +217,7 @@ export default function Timeline({ folder, offsets, selected, onSelect, pick, on
                       <button
                         type="button"
                         key={i}
+                        tabIndex={-1}
                         className={picked ? "frame picked" : "frame"}
                         style={{ left: xs[i]! }}
                         title={`${p.name}, ${clock(lanes[ci]![i]!)}`}
