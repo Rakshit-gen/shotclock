@@ -112,8 +112,18 @@ export default function Timeline({ folder, offsets, selected, onSelect, onOffset
     const out: { t: number; label: string; day: boolean }[] = [];
     for (let t = Math.ceil(t0 / step) * step; t <= t1; t += step) {
       const midnight = t % (24 * HOUR) === 0;
-      out.push({ t, label: midnight ? day(t) : clock(t).slice(0, 5), day: midnight });
+      out.push({ t, label: midnight ? "00:00" : clock(t).slice(0, 5), day: midnight });
     }
+    return out;
+  }, [t0, t1, scale]);
+
+  // Day names sit on their own row above the hours: one at each midnight,
+  // and one where the trip starts unless a midnight is right next to it.
+  const days = useMemo(() => {
+    const out: number[] = [];
+    const first = Math.ceil(t0 / (24 * HOUR)) * 24 * HOUR;
+    if ((first - t0) * scale > 90) out.push(t0);
+    for (let t = first; t <= t1; t += 24 * HOUR) out.push(t);
     return out;
   }, [t0, t1, scale]);
 
@@ -174,6 +184,11 @@ export default function Timeline({ folder, offsets, selected, onSelect, onOffset
       <div className="scroller" ref={scroller}>
         <div className="canvas" style={{ width: full }}>
           <div className="ruler" aria-hidden="true">
+            {days.map((t) => (
+              <span key={`d${t}`} className="day-name" style={{ left: x(t) }}>
+                {day(t)}
+              </span>
+            ))}
             {ticks.map((k) => (
               <span key={k.t} className={k.day ? "tick day" : "tick"} style={{ left: x(k.t) }}>
                 {k.label}

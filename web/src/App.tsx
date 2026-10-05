@@ -109,7 +109,9 @@ export default function App() {
         {folder && !reopen && (
           <>
             <span className="path mono" title={folder.dir}>
-              {folder.dir}
+              {/* The left mark keeps the leading slash where it belongs when
+                  the path is cut from the left. */}
+              {"\u200e" + folder.dir}
             </span>
             <button type="button" onClick={() => setReopen(true)}>
               Open another folder

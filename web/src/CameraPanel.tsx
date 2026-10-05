@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import type { Folder } from "./api";
 import type { Pick } from "./Timeline";
-import { clock, dateTime, formatOffset, formatTz, parseOffset, parseTaken } from "./time";
+import { clock, day, formatOffset, formatTz, parseOffset, parseTaken } from "./time";
+
+const dayYear = (t: number) => `${day(t)} ${new Date(t).getUTCFullYear()}`;
 
 interface Props {
   folder: Folder;
@@ -66,6 +68,7 @@ export default function CameraPanel({ folder, camera, offset, onOffset, pick, on
             autoComplete="off"
             aria-invalid={bad}
             aria-describedby="offset-help"
+            style={{ width: `${Math.max(draft.length, 6) + 2}ch` }}
           />
           <div className="nudges" role="group" aria-label="Nudge">
             {NUDGES.map(([label, n]) => (
@@ -142,10 +145,14 @@ export default function CameraPanel({ folder, camera, offset, onOffset, pick, on
             return (
               <tr key={p.name}>
                 <td className="mono">{p.name}</td>
-                <td className="mono">{dateTime(t)}</td>
-                <td className="mono">
-                  {dateTime(to)}
-                  {zone !== null && <span className="zone"> {formatTz(zone)}</span>}
+                <td>
+                  <span className="when-day">{dayYear(t)}</span>
+                  <span className="mono">{clock(t)}</span>
+                </td>
+                <td>
+                  <span className="when-day">{dayYear(to)}</span>
+                  <span className="mono">{clock(to)}</span>
+                  {zone !== null && <span className="mono zone"> {formatTz(zone)}</span>}
                 </td>
               </tr>
             );
