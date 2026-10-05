@@ -6,3 +6,4 @@ pub mod patch;
 pub mod offset;
 pub mod scan;
 pub mod suggest;
+pub mod write;
