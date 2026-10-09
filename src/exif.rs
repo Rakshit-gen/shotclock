@@ -306,8 +306,9 @@ pub fn parse_tz(s: &str) -> Option<i32> {
         _ => return None,
     };
     let (h, m) = s[1..].split_once(':')?;
-    let (h, m): (i32, i32) = (h.parse().ok()?, m.parse().ok()?);
-    (h <= 14 && m < 60).then_some(sign * (h * 60 + m))
+    // Unsigned, so "+-5:00" or "+05:-30" don't come out as a time zone.
+    let (h, m): (u8, u8) = (h.parse().ok()?, m.parse().ok()?);
+    (h <= 14 && m < 60).then_some(sign * (i32::from(h) * 60 + i32::from(m)))
 }
 
 /// The inverse of `parse_tz`: always seven bytes with the NUL, as EXIF wants.
@@ -315,4 +316,19 @@ pub fn format_tz(minutes: i32) -> String {
     let sign = if minutes < 0 { '-' } else { '+' };
     let m = minutes.abs();
     format!("{sign}{:02}:{:02}", m / 60, m % 60)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn time_zones() {
+        assert_eq!(parse_tz("+09:00"), Some(540));
+        assert_eq!(parse_tz("-03:30"), Some(-210));
+        assert_eq!(parse_tz(" +05:45 "), Some(345));
+        for bad in ["+-5:00", "+05:-30", "+15:00", "+05:60", "05:00", "+5", ""] {
+            assert_eq!(parse_tz(bad), None, "{bad}");
+        }
+    }
 }
