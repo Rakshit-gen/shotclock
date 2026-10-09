@@ -82,6 +82,10 @@ fn add_offset_original(bytes: &[u8], x: &Exif, value: &str) -> Result<Vec<u8>, E
         end: l.segment.end,
     };
     let n = r.u16(ifd)? as usize;
+    // Reading the photo only looked at the entries' first eight bytes. The
+    // whole IFD, through its next-IFD pointer, is copied below, so all of
+    // it has to be inside the segment.
+    r.u32(ifd + 2 + n * 12)?;
     let u16b = |v: u16| {
         if l.little {
             v.to_le_bytes()
@@ -215,5 +219,19 @@ mod tests {
             assert_eq!(again.len(), out.len());
             assert_eq!(exif::read(&again).unwrap().tz, Some(60));
         }
+    }
+
+    #[test]
+    fn refuses_an_exif_ifd_that_runs_past_its_segment() {
+        let mut src = photo(true, None);
+        let x = exif::read(&src).unwrap();
+        // Claim one more entry than fits before the segment ends.
+        let ifd = x.layout.exif_ifd.unwrap();
+        let fits = (x.layout.segment.end - ifd - 2) / 12;
+        src[ifd..ifd + 2].copy_from_slice(&(fits as u16 + 1).to_le_bytes());
+        assert!(matches!(
+            patch(&src, TimeDelta::zero(), Some(60)),
+            Err(Error::Damaged(_))
+        ));
     }
 }
